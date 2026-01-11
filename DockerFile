@@ -1,0 +1,25 @@
+# Gunakan image resmi Puppeteer (sudah ada Chrome & Node.js)
+FROM ghcr.io/puppeteer/puppeteer:21.5.2
+
+# Skip download Chrome saat npm install (karena sudah ada di image)
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+
+WORKDIR /usr/src/app
+
+# Copy package info
+COPY package*.json ./
+
+# Install dependencies
+USER root
+RUN npm install
+USER pptruser
+
+# Copy source code
+COPY . .
+
+# Expose port (Sesuaikan dengan port app kamu, biasanya 3000)
+EXPOSE 3000
+
+# Jalankan aplikasi
+CMD ["node", "index.js"]
