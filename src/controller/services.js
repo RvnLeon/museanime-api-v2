@@ -1,4 +1,4 @@
-const services = require("../helper/sevice");
+const services = require("../helper/service");
 const cheerio = require("cheerio");
 const baseUrl = require("../constant/url");
 const episodeHelper = require("../helper/episodeHelper");
