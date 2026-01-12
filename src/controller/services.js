@@ -111,6 +111,8 @@ const Services = {
         message: error.message,
         ongoing: [],
       });
+    } finally {
+      if (browser) await browser.close();
     }
   },
 
@@ -118,24 +120,47 @@ const Services = {
   getCompleted: async (req, res) => {
     const page = req.params.page;
     let url = `${baseUrl}/quick/finished?order_by=updated&page=${page}`;
-
     let browser = null;
+
     try {
-      // Gunakan logika launch yang sama dengan getAnimeEpisode
       browser = await puppeteer.launch({
         headless: "new",
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-blink-features=AutomationControlled", // Hides Puppeteer footprint
+        ],
       });
+
       const p = await browser.newPage();
+
+      // High-level evasion
+      await p.setExtraHTTPHeaders({
+        "Accept-Language": "en-US,en;q=0.9",
+      });
       await p.setUserAgent(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
       );
 
-      await p.goto(url, { waitUntil: "domcontentloaded" });
+      await p.goto(url, {
+        waitUntil: "networkidle2", // Wait until no more than 2 network connections are active
+        timeout: 60000,
+      });
+
+      // CRITICAL: Wait for the specific element to exist before parsing
+      try {
+        await p.waitForSelector(".product__item", { timeout: 15000 });
+      } catch (e) {
+        console.error(
+          "Elements not found within timeout. Site might be blocking Koyeb IP."
+        );
+        // Optional: await p.screenshot({ path: 'debug.png' });
+      }
+
       const content = await p.content();
       const $ = cheerio.load(content);
-
       let completed = [];
+
       $(".product__item").each((index, el) => {
         const title = $(el).find(".product__item__text h5 a").text().trim();
         const thumb = $(el).find(".product__item__pic").attr("data-setbg");
@@ -143,13 +168,16 @@ const Services = {
         let rawLink = $(el).find("a").attr("href");
         let endpoint = rawLink ? rawLink.split("/anime/")[1] : "";
 
-        completed.push({
-          title,
-          thumb,
-          total_episode: "Tamat",
-          score,
-          endpoint,
-        });
+        if (title) {
+          // Ensure we don't push empty objects
+          completed.push({
+            title,
+            thumb,
+            total_episode: "Tamat",
+            score,
+            endpoint,
+          });
+        }
       });
 
       await browser.close();
@@ -161,7 +189,11 @@ const Services = {
       });
     } catch (error) {
       if (browser) await browser.close();
-      res.status(500).send({ status: false, message: error.message });
+      return res
+        .status(500)
+        .json({ status: false, message: error.message, completed: [] });
+    } finally {
+      if (browser) await browser.close();
     }
   },
 
@@ -253,6 +285,8 @@ const Services = {
     } catch (error) {
       console.log(error);
       res.send({ status: false, message: error.message, search: [] });
+    } finally {
+      if (browser) await browser.close();
     }
   },
   getAnimeList: async (req, res) => {
