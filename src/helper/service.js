@@ -1,90 +1,49 @@
+/* * Filename: helper/service.js
+ * Context: Browserless.io Integration ☁️
+ * Description: Scraping via Remote Browser (Anti-Headache Edition).
+ */
 const cheerio = require("cheerio");
-const puppeteer = require("puppeteer-extra");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-const path = require("path");
+const puppeteer = require("puppeteer-core"); // Pakai core aja, gak usah download chromium
 
-puppeteer.use(StealthPlugin());
+// --- CONFIG ---
+// Masukkan Token Browserless kamu disini (atau lebih aman taruh di .env)
+const BROWSERLESS_TOKEN =
+  process.env.BROWSERLESS_TOKEN || "MASUKKAN_TOKEN_BROWSERLESS_DISINI";
 
 const Service = {
   fetchService: async (url, selector = "body") => {
     let browser = null;
     try {
-      console.log(`[HELPER] 🍪 Launching Browser with Session: ${url}`);
+      console.log(`[HELPER] ☁️ Connecting to Browserless.io: ${url}`);
 
-      const userDataDir = path.join("/tmp", "puppeteer_session");
-
-      browser = await puppeteer.launch({
-        headless: "new",
-        userDataDir: userDataDir,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-accelerated-2d-canvas",
-          "--no-first-run",
-          "--no-zygote",
-          "--disable-gpu",
-          "--window-size=1280,720",
-        ],
+      // Connect ke Browser Remote
+      browser = await puppeteer.connect({
+        browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}&stealth=true&--window-size=1920,1080`,
       });
 
       const page = await browser.newPage();
 
-      await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      );
+      // Setting Viewport Standard
+      await page.setViewport({ width: 1920, height: 1080 });
 
-      await page.setViewport({ width: 1280, height: 720 });
-
+      // Navigasi
       console.log("[HELPER] Navigating...");
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
 
-      // Cek Title
+      // Cek Cloudflare (Browserless biasanya otomatis lolos, tapi jaga-jaga)
       const title = await page.title();
-      if (title.includes("Just a moment") || title.includes("Cloudflare")) {
-        console.log(
-          "[HELPER] ⚠️ Cloudflare Detected! Trying Checkbox Click..."
-        );
-
-        await new Promise((r) => setTimeout(r, 3000));
-
-        try {
-          const frames = page.frames();
-          let clicked = false;
-          for (const frame of frames) {
-            const checkbox = await frame.$("input[type='checkbox']");
-            if (checkbox) {
-              await checkbox.click();
-              console.log("[HELPER] ✅ Clicked Checkbox inside iframe!");
-              clicked = true;
-              break;
-            }
-          }
-
-          if (!clicked) {
-            const shadowHost = await page.$("#turnstile-wrapper");
-            if (shadowHost) {
-            }
-
-            console.log("[HELPER] Trying coordinate click (640, 290)...");
-            await page.mouse.click(640, 290);
-          }
-        } catch (e) {
-          console.log("[HELPER] Click error: " + e.message);
-        }
+      if (title.includes("Just a moment")) {
+        console.log("[HELPER] ⚠️ Cloudflare found, waiting for auto-bypass...");
+        await new Promise((r) => setTimeout(r, 5000)); // Browserless stealth usually handles this
       }
 
+      // Tunggu Konten
       try {
         console.log(`[HELPER] Waiting for content: ${selector}`);
-        await page.waitForSelector(selector, { timeout: 40000 });
-        console.log("[HELPER] 🎉 Success! Content Loaded.");
+        await page.waitForSelector(selector, { timeout: 30000 });
+        console.log("[HELPER] 🎉 Success!");
       } catch (e) {
-        const content = await page.content();
-        if (!content.includes(selector.replace(".", ""))) {
-          // Hapus titik utk cek string
-          // await page.screenshot({ path: '/tmp/debug.png' });
-          throw new Error("Gagal tembus Cloudflare (Timeout).");
-        }
+        throw new Error("Timeout waiting for content on Browserless.");
       }
 
       const content = await page.content();
