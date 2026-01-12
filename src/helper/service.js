@@ -19,7 +19,7 @@ const Service = {
 
       // Connect ke Browser Remote
       browser = await puppeteer.connect({
-        browserWSEndpoint: `wss://chrome.browserless.io?token=${BROWSERLESS_TOKEN}&stealth=true&--window-size=1920,1080`,
+        browserWSEndpoint: `wss://production-sfo.browserless.io/stealth?token=2TmGo2QXB9rcS8af87d07b507d53d94c143b9225dffe35753`,
       });
 
       const page = await browser.newPage();
