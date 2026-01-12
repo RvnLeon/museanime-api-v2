@@ -1,40 +1,69 @@
-const axios = require("axios");
+const cheerio = require("cheerio");
+const puppeteer = require("puppeteer-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+
+puppeteer.use(StealthPlugin());
 
 const Service = {
-  fetchService: async (url, res) => {
+  fetchService: async (url, selector = "body") => {
+    let browser = null;
     try {
-      const response = await axios.get(url, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.5",
-          Referer: "https://google.com",
-          "Upgrade-Insecure-Requests": "1",
-        },
-        timeout: 15000,
+      console.log(`[HELPER] Launching Puppeteer for: ${url}`);
+
+      browser = await puppeteer.launch({
+        headless: "new",
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--no-first-run",
+          "--no-zygote",
+          "--disable-gpu",
+          "--mute-audio",
+        ],
       });
 
-      return new Promise((resolve, reject) => {
-        if (response.status === 200) resolve(response);
-        reject(response);
+      const page = await browser.newPage();
+
+      await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      );
+      await page.setViewport({ width: 1280, height: 720 });
+
+      await page.setRequestInterception(true);
+      page.on("request", (req) => {
+        if (
+          ["image", "stylesheet", "font", "media"].includes(req.resourceType())
+        ) {
+          req.abort();
+        } else {
+          req.continue();
+        }
       });
+
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+
+      try {
+        console.log(`[HELPER] Waiting for selector: ${selector}`);
+        await page.waitForSelector(selector, { timeout: 30000 });
+        console.log("[HELPER] Selector found! Cloudflare passed.");
+      } catch (e) {
+        console.warn(
+          "[HELPER WARN] Selector timeout. Cloudflare mungkin stuck atau konten kosong."
+        );
+      }
+
+      // Ambil HTML
+      const content = await page.content();
+      const $ = cheerio.load(content);
+
+      return { status: 200, data: $ };
     } catch (error) {
-      console.log(`[Fetch Error] URL: ${url} | Msg: ${error.message}`);
-
-      if (error.response) {
-        console.log(`[Status Code] ${error.response.status}`);
-      }
-
-      if (res) {
-        res.status(error.response ? error.response.status : 500).send({
-          status: false,
-          code: error.response ? error.response.status : 500,
-          message: "Source Blocked or Error",
-        });
-      }
+      console.error(`[HELPER ERROR] ${error.message}`);
       throw error;
+    } finally {
+      if (browser) await browser.close();
     }
   },
 };

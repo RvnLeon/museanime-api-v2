@@ -40,267 +40,152 @@ const Services = {
     const page = req.params.page;
     const url = `${baseUrl}/quick/ongoing?order_by=updated&page=${page}`;
 
-    // Initialize browser as null for proper scoping in try/catch
-    let browser = null;
-
     try {
-      // Launching the engine
-      browser = await puppeteer.launch({
-        headless: "new",
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      });
+      // Panggil Helper, suruh tunggu element '.product__item'
+      const response = await services.fetchService(url, ".product__item");
+      const $ = response.data; // Helper sekarang mengembalikan object Cheerio ($)
 
-      const p = await browser.newPage();
-
-      // Stealth and Identification
-      await p.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      );
-
-      // Navigate and wait for the DOM to be ready
-      await p.goto(url, {
-        waitUntil: "domcontentloaded",
-        timeout: 60000,
-      });
-
-      // Extracting HTML content to parse with Cheerio (Faster than p.$$eval)
-      const content = await p.content();
-      const $ = cheerio.load(content);
-      const ongoing = [];
-
+      let ongoing = [];
       $(".product__item").each((index, el) => {
-        const $el = $(el);
-        const title = $el.find(".product__item__text h5 a").text().trim();
-        const thumb = $el.find(".product__item__pic").attr("data-setbg");
-        const epText = $el.find(".ep span").text().trim();
-
-        // --- [FIX] URL CLEANING LOGIC ---
-        let rawLink = $el.find("a").attr("href") || "";
-        let endpoint = rawLink.replace(baseUrl, "").replace("/anime/", "");
-
-        if (endpoint.includes("/episode/")) {
-          endpoint = endpoint.split("/episode/")[0];
-        }
-        // --------------------------------
-
-        const total_episode = epText.replace("Ep", "").trim();
+        const title = $(el).find(".product__item__text h5 a").text().trim();
+        const thumb = $(el).find(".product__item__pic").attr("data-setbg");
+        const epText = $(el).find(".ep span").text().trim();
+        let rawLink = $(el).find("a").attr("href") || "";
+        let endpoint = rawLink
+          .replace(baseUrl, "")
+          .replace("/anime/", "")
+          .split("/episode/")[0];
 
         ongoing.push({
           title,
           thumb,
-          total_episode,
-          updated_on: "Hari ini",
-          updated_day: "Unknown",
           endpoint,
+          total_episode: epText.replace("Ep", "").trim(),
+          updated_on: "Hari ini",
         });
       });
 
-      // Always close the browser to prevent memory leaks on your Ryzen 2500U
-      await browser.close();
-
-      return res.status(200).json({
-        status: true,
-        message: "success",
-        ongoing,
-        currentPage: page,
-      });
+      res
+        .status(200)
+        .json({ status: true, message: "success", ongoing, currentPage: page });
     } catch (error) {
-      // Critical: Ensure browser is killed if an error occurs
-      if (browser) await browser.close();
-
-      console.error(`[Puppeteer Error]: ${error.message}`);
-      return res.status(500).json({
-        status: false,
-        message: error.message,
-        ongoing: [],
-      });
-    } finally {
-      if (browser) await browser.close();
+      res
+        .status(500)
+        .json({ status: false, message: error.message, ongoing: [] });
     }
   },
-
   // 2. GET COMPLETED
   getCompleted: async (req, res) => {
-    const { page } = req.params;
-    const url = `${baseUrl}/quick/ongoing?order_by=updated&page=${page}`;
-
-    let browser = null;
+    const page = req.params.page;
+    const url = `${baseUrl}/quick/finished?order_by=updated&page=${page}`;
 
     try {
-      browser = await puppeteer.launch({
-        headless: "new",
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-blink-features=AutomationControlled", // Essential for stealth
-        ],
+      const response = await services.fetchService(url, ".product__item");
+      const $ = response.data;
+
+      let completed = [];
+      $(".product__item").each((index, el) => {
+        const title = $(el).find(".product__item__text h5 a").text().trim();
+        const thumb = $(el).find(".product__item__pic").attr("data-setbg");
+        const score = $(el).find(".ep span").text().trim();
+        let rawLink = $(el).find("a").attr("href") || "";
+        let endpoint = rawLink
+          .replace(baseUrl, "")
+          .replace("/anime/", "")
+          .split("/episode/")[0];
+
+        completed.push({
+          title,
+          thumb,
+          score,
+          endpoint,
+          total_episode: "Tamat",
+        });
       });
 
-      const p = await browser.newPage();
-
-      // High-level evasion: Emulate a high-resolution display
-      await p.setViewport({ width: 1366, height: 768 });
-
-      await p.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      );
-
-      // We use 'networkidle2' to ensure scripts (like Turnstile) have space to execute
-      await p.goto(url, {
-        waitUntil: "networkidle2",
-        timeout: 60000,
-      });
-
-      // --- BYPASS LOGIC ---
-      // We wait for the specific list container. If it's not found, it likely means
-      // we are stuck at the "Verify you are human" screen.
-      try {
-        await p.waitForSelector(".product__item", { timeout: 20000 });
-      } catch (e) {
-        console.error("Cloudflare challenge screen detected or site timeout.");
-        // If the selector fails, we attempt to grab whatever content is there for debugging
-      }
-
-      const content = await p.content();
-      const $ = cheerio.load(content);
-      const ongoing = [];
-
-      $(".product__item").each((_, el) => {
-        const $el = $(el);
-        const title = $el.find(".product__item__text h5 a").text().trim();
-        const thumb = $el.find(".product__item__pic").attr("data-setbg");
-        const epText = $el.find(".ep span").text().trim();
-
-        let rawLink = $el.find("a").attr("href") || "";
-        let endpoint = rawLink.replace(baseUrl, "").replace("/anime/", "");
-
-        if (endpoint.includes("/episode/")) {
-          endpoint = endpoint.split("/episode/")[0];
-        }
-
-        const total_episode = epText.replace("Ep", "").trim();
-
-        if (title) {
-          ongoing.push({
-            title,
-            thumb,
-            total_episode,
-            updated_on: "Hari ini",
-            updated_day: "Unknown",
-            endpoint,
-          });
-        }
-      });
-
-      return res.status(200).json({
+      res.status(200).json({
         status: true,
         message: "success",
-        ongoing,
+        completed,
         currentPage: page,
       });
     } catch (error) {
-      console.error(`[Scraper Error]: ${error.message}`);
-      return res.status(500).json({
-        status: false,
-        message: error.message,
-        ongoing: [],
-      });
-    } finally {
-      // Critical: Ensure no zombie processes remain on your Ryzen 2500U
-      if (browser) await browser.close();
+      res
+        .status(500)
+        .json({ status: false, message: error.message, completed: [] });
     }
   },
   // 3. GET SEARCH
   getSearch: async (req, res) => {
     const query = req.params.q;
-    let url = `${baseUrl}/anime?search=${query}&order_by=latest`;
+    const url = `${baseUrl}/anime?search=${query}&order_by=latest`;
 
     try {
-      // 1. Fetch Halaman Search Utama
-      const response = await services.fetchService(url, res);
-      if (response.status === 200) {
-        const $ = cheerio.load(response.data);
-        let candidates = [];
+      const response = await services.fetchService(url, ".product__item");
+      const $ = response.data;
 
-        // 2. Kumpulkan Kandidat Awal (Belum difilter)
-        $(".product__item").each((index, el) => {
-          const title = $(el).find(".product__item__text h5 a").text().trim();
-          const thumb = $(el).find(".product__item__pic").attr("data-setbg");
-          let rawLink = $(el).find("a").attr("href");
-          let endpoint = rawLink ? rawLink.split("/anime/")[1] : "";
+      let candidates = [];
+      $(".product__item").each((index, el) => {
+        const title = $(el).find(".product__item__text h5 a").text().trim();
+        const thumb = $(el).find(".product__item__pic").attr("data-setbg");
+        let endpoint = $(el)
+          .find("a")
+          .attr("href")
+          .replace(baseUrl, "")
+          .replace("/anime/", "");
+        if (endpoint) candidates.push({ title, thumb, endpoint });
+      });
 
-          if (endpoint) {
-            candidates.push({ title, thumb, endpoint });
-          }
-        });
+      // DEEP CHECK (Parallel Limit 5 biar server ga meledak)
+      const safeSearch = [];
+      const MAX_PARALLEL = 5;
 
-        // 3. DEEP CHECK: Buka Detail Semua Kandidat Secara Bersamaan (Parallel)
-        // Kita pakai Promise.all biar prosesnya super cepat (tidak antri)
-        const detailedChecks = await Promise.all(
-          candidates.map(async (anime) => {
+      // Kita potong array jadi potongan-potongan kecil (chunk)
+      for (let i = 0; i < candidates.length; i += MAX_PARALLEL) {
+        const chunk = candidates.slice(i, i + MAX_PARALLEL);
+        const results = await Promise.all(
+          chunk.map(async (anime) => {
             try {
-              // Fetch Halaman Detail
               const detailUrl = `${baseUrl}/anime/${anime.endpoint}`;
+              // Helper disuruh tunggu widget genre muncul
+              const detailResp = await services.fetchService(
+                detailUrl,
+                ".anime__details__widget"
+              );
+              const $$ = detailResp.data;
 
-              // Gunakan fetchService (pastikan return datanya, jangan res.send dulu)
-              // Kita passing 'null' sebagai res karena kita cuma butuh datanya, gak mau fetchService nge-respond langsung
-              const detailResp = await services.fetchService(detailUrl, null);
-
-              // Kalau gagal fetch detail, anggap tidak aman (fail-safe)
-              if (!detailResp || detailResp.status !== 200) return null;
-
-              const $$ = cheerio.load(detailResp.data);
-
-              // Ambil Genre dari halaman detail
               let genres = [];
-              $$(".anime__details__widget ul li").each((i, el) => {
-                const text = $$(el).text();
-                if (text.includes("Genre")) {
-                  genres = text
+              $$(".anime__details__widget ul li").each((j, el) => {
+                if ($$(el).text().includes("Genre")) {
+                  genres = $$(el)
+                    .text()
                     .replace("Genre:", "")
                     .trim()
                     .split(",")
                     .map((g) => g.trim());
                 }
               });
-
-              // --- THE MOMENT OF TRUTH ---
-              // Cek apakah genre aman menggunakan fungsi isSafeContent yang sudah ada
-              if (isSafeContent(genres)) {
-                // AMAN: Kembalikan data anime (bisa sekalian bawa genre-nya)
-                return {
-                  ...anime,
-                  genres: genres, // Bonus: Sekarang hasil search ada genrenya!
-                  status: "Safe",
-                };
-              } else {
-                // BAHAYA: Kembalikan null (akan dibuang nanti)
-                return null;
-              }
-            } catch (err) {
-              // Kalau error saat cek detail, skip aja biar aman
+              return isSafeContent(genres)
+                ? { ...anime, genres, status: "Safe" }
+                : null;
+            } catch (e) {
               return null;
             }
           })
         );
 
-        // 4. Bersihkan hasil dari yang null (yang kena filter atau error)
-        const safeSearch = detailedChecks.filter((item) => item !== null);
-
-        return res.status(200).json({
-          status: true,
-          message: "success",
-          search: safeSearch,
-          query,
+        results.forEach((r) => {
+          if (r) safeSearch.push(r);
         });
       }
-      return res.send({ message: response.status, search: [] });
+
+      res
+        .status(200)
+        .json({ status: true, message: "success", search: safeSearch, query });
     } catch (error) {
-      console.log(error);
-      res.send({ status: false, message: error.message, search: [] });
-    } finally {
-      if (browser) await browser.close();
+      res
+        .status(500)
+        .json({ status: false, message: error.message, search: [] });
     }
   },
   getAnimeList: async (req, res) => {
@@ -351,106 +236,76 @@ const Services = {
   // 4. GET ANIME DETAIL (Cleaned Version ✨)
   getAnimeDetail: async (req, res) => {
     const endpoint = req.params[0];
-    let url = `${baseUrl}/anime/${endpoint}`;
+    const url = `${baseUrl}/anime/${endpoint}`;
 
     try {
-      const response = await services.fetchService(url, res);
-      if (response.status === 200) {
-        const $ = cheerio.load(response.data);
+      const response = await services.fetchService(
+        url,
+        ".anime__details__title"
+      );
+      const $ = response.data;
 
-        // --- 1. Ambil Genre & Filter Halal ---
-        let genres = [];
-        $(".anime__details__widget ul li").each((i, el) => {
-          const text = $(el).text();
-          if (text.includes("Genre")) {
-            genres = text
-              .replace("Genre:", "")
-              .trim()
-              .split(",")
-              .map((g) => g.trim());
-          }
-        });
-
-        if (!isSafeContent(genres)) {
-          return res.status(403).json({
-            status: false,
-            message: "Content blocked (Safe Filter Active).",
-            anime_detail: {},
-            episode_list: [],
-          });
+      let genres = [];
+      $(".anime__details__widget ul li").each((i, el) => {
+        if ($(el).text().includes("Genre")) {
+          genres = $(el)
+            .text()
+            .replace("Genre:", "")
+            .trim()
+            .split(",")
+            .map((g) => g.trim());
         }
+      });
 
-        // --- 2. Ambil Detail Utama (Clean Text) ---
-        const title = $(".anime__details__title h3").text().trim();
-        const sinopsis = $(".anime__details__text p").text().trim();
-        const thumb = $(".anime__details__pic").attr("data-setbg");
-
-        let detail = [];
-        $(".anime__details__widget ul li").each((i, el) => {
-          detail.push($(el).text().replace(/\s+/g, " ").trim());
-        });
-
-        // --- 3. AMBIL LIST EPISODE (LOGIC BARU) ---
-        let episode_list = [];
-
-        // Target: Tombol dengan ID #episodeLists
-        // Datanya sembunyi di atribut 'data-content'
-        const popoverContent = $("#episodeLists").attr("data-content");
-
-        if (popoverContent) {
-          // Helper: Decode HTML Entities (&lt; jadi <, dst)
-          const unescapeHTML = (str) => {
-            return str
-              .replace(/&lt;/g, "<")
-              .replace(/&gt;/g, ">")
-              .replace(/&quot;/g, '"')
-              .replace(/&#39;/g, "'")
-              .replace(/&amp;/g, "&");
-          };
-
-          // Decode string menjadi HTML valid
-          const htmlContent = unescapeHTML(popoverContent);
-
-          // Load string HTML tadi ke instance Cheerio baru ($$)
-          const $$ = cheerio.load(htmlContent);
-
-          // Cari semua tag <a> dengan class 'btn-danger' (Ciri khas tombol episode normal)
-          $$("a.btn-danger").each((i, el) => {
-            const episode_title = $$(el).text().trim(); // Contoh: "Ep 1"
-            const fullHref = $$(el).attr("href");
-
-            // Bersihkan URL endpoint
-            let episode_endpoint = fullHref.replace(`${baseUrl}/anime/`, "");
-
-            episode_list.push({
-              episode_title,
-              episode_endpoint,
-              episode_date: "Unknown",
-            });
-          });
-        }
-
-        // Balik urutan: Episode 1 paling bawah (opsional, matikan kalau mau Ep 1 di atas)
-        // episode_list.reverse();
-
-        return res.status(200).json({
-          status: true,
-          message: "success",
-          anime_detail: {
-            title,
-            thumb,
-            sinopsis,
-            detail,
-            genres,
-          },
-          episode_list, // Sekarang harusnya isi 128 episode! 🔥
-          endpoint,
+      if (!isSafeContent(genres)) {
+        return res.status(403).json({
+          status: false,
+          message: "Content blocked by Safe Filter.",
+          anime_detail: {},
+          episode_list: [],
         });
       }
-      res.send({ message: "Failed to fetch detail", anime_detail: [] });
+
+      const title = $(".anime__details__title h3").text().trim();
+      const sinopsis = $(".anime__details__text p").text().trim();
+      const thumb = $(".anime__details__pic").attr("data-setbg");
+      let detail = [];
+      $(".anime__details__widget ul li").each((i, el) =>
+        detail.push($(el).text().replace(/\s+/g, " ").trim())
+      );
+
+      let episode_list = [];
+      const popoverContent = $("#episodeLists").attr("data-content");
+      if (popoverContent) {
+        const htmlContent = popoverContent
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/&amp;/g, "&");
+        const $$ = cheerio.load(htmlContent);
+        $$("a.btn-danger").each((i, el) => {
+          const episode_title = $$(el).text().trim();
+          let episode_endpoint = $$(el)
+            .attr("href")
+            .replace(`${baseUrl}/anime/`, "");
+          episode_list.push({
+            episode_title,
+            episode_endpoint,
+            episode_date: "Unknown",
+          });
+        });
+      }
+
+      res.status(200).json({
+        status: true,
+        message: "success",
+        anime_detail: { title, thumb, sinopsis, detail, genres },
+        episode_list,
+        endpoint,
+      });
     } catch (error) {
-      console.log(error);
-      res.send({ status: false, message: error.message });
+      res.status(500).json({ status: false, message: error.message });
     }
   },
   getEmbedByContent: async (req, res) => {
@@ -475,62 +330,15 @@ const Services = {
     const endpoint = req.params[0];
     const url = `${baseUrl}/anime/${endpoint}`;
 
-    console.log(`\n========================================`);
-    console.log(`[START] Fetching via Puppeteer Stealth: ${url}`);
-
-    let browser = null;
-
     try {
-      // --- LOGIC: DYNAMIC LAUNCH ---
-      browser = await puppeteer.launch({
-        headless: "new",
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-blink-features=AutomationControlled", // Masking automated control
-        ],
-      });
-
-      const page = await browser.newPage();
-
-      // Emulating a high-resolution human session
-      await page.setViewport({ width: 1280, height: 720 });
-      await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      );
-
-      // --- NAVIGASI ---
-      console.log("[DEBUG] Navigating to Episode Page...");
-      await page.goto(url, {
-        waitUntil: "networkidle2", // Ensure scripts load fully for the player
-        timeout: 60000,
-      });
-
-      // --- BYPASS & WAIT LOGIC ---
-      // We look for the player specifically. If Cloudflare appears, this wait will fail.
-      try {
-        console.log("[DEBUG] Waiting for video player elements...");
-        await page.waitForSelector(
-          'video#player, iframe[src*="stream"], iframe[src*="drive"], iframe[src*="kurama"]',
-          { timeout: 25000, visible: true }
-        );
-        console.log("[DEBUG] Player element detected.");
-      } catch (e) {
-        console.warn(
-          "[WARN] Selector timeout. Cloudflare might be active or player is slow."
-        );
-      }
-
-      const content = await page.content();
-      const $ = cheerio.load(content);
+      const response = await services.fetchService(url, "#player"); // Tunggu player muncul
+      const $ = response.data;
 
       let title = $("title").text().replace(" - Kuramanime", "").trim();
-      let streamLink = "";
-      let streamQuality = "Unknown";
-      let qualityList = {};
+      let streamLink = "",
+        streamQuality = "Unknown",
+        qualityList = {};
 
-      // --- DATA EXTRACTION: VIDEO TAG ---
       const videoTag = $("video#player");
       if (videoTag.length > 0) {
         const mainSrc = videoTag.attr("src");
@@ -552,16 +360,14 @@ const Services = {
         });
       }
 
-      // --- DATA EXTRACTION: IFRAME FALLBACK ---
       if (!streamLink) {
         $("iframe").each((i, el) => {
           const src = $(el).attr("src");
           if (
             src &&
-            (src.includes("komari") ||
-              src.includes("drive") ||
-              src.includes("stream") ||
-              src.includes("kurama"))
+            (src.includes("stream") ||
+              src.includes("kurama") ||
+              src.includes("drive"))
           ) {
             streamLink = src;
             streamQuality = "Embed";
@@ -570,18 +376,14 @@ const Services = {
         });
       }
 
-      const mirrorList = Object.keys(qualityList).map((key) => ({
-        quality: key,
-        link: qualityList[key],
+      const mirrorList = Object.keys(qualityList).map((k) => ({
+        quality: k,
+        link: qualityList[k],
       }));
 
-      console.log(
-        `[RESULT] Extraction complete: ${streamLink ? "SUCCESS" : "ZONK"}`
-      );
-
-      return res.status(200).json({
+      res.status(200).json({
         status: !!streamLink,
-        message: streamLink ? "success" : "failed to get video content",
+        message: streamLink ? "success" : "failed",
         data: {
           title,
           baseUrl: url,
@@ -591,13 +393,8 @@ const Services = {
           mirror_embed1: { quality: "Multi-Source", streaming: mirrorList },
         },
       });
-    } catch (err) {
-      console.error("[ERROR]", err.message);
-      return res
-        .status(500)
-        .json({ status: false, message: `Server Error: ${err.message}` });
-    } finally {
-      if (browser) await browser.close();
+    } catch (error) {
+      res.status(500).json({ status: false, message: error.message });
     }
   },
   getBatchLink: async (req, res) => {
