@@ -8,7 +8,8 @@ const puppeteer = require("puppeteer-core"); // Pakai core aja, gak usah downloa
 // --- CONFIG ---
 // Masukkan Token Browserless kamu disini (atau lebih aman taruh di .env)
 const BROWSERLESS_TOKEN =
-  process.env.BROWSERLESS_TOKEN || "MASUKKAN_TOKEN_BROWSERLESS_DISINI";
+  process.env.BROWSERLESS_TOKEN ||
+  "2TmGo2QXB9rcS8af87d07b507d53d94c143b9225dffe35753";
 
 const Service = {
   fetchService: async (url, selector = "body") => {
