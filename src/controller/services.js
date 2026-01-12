@@ -35,57 +35,82 @@ const isSafeContent = (genres) => {
 const Services = {
   getOngoing: async (req, res) => {
     const page = req.params.page;
-    let url = `${baseUrl}/quick/ongoing?order_by=updated&page=${page}`;
+    const url = `${baseUrl}/quick/ongoing?order_by=updated&page=${page}`;
+
+    // Initialize browser as null for proper scoping in try/catch
+    let browser = null;
 
     try {
-      const response = await services.fetchService(url, res);
-      if (response.status === 200) {
-        const $ = cheerio.load(response.data);
-        let ongoing = [];
+      // Launching the engine
+      browser = await puppeteer.launch({
+        headless: "new",
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      });
 
-        $(".product__item").each((index, el) => {
-          const title = $(el).find(".product__item__text h5 a").text().trim();
-          const thumb = $(el).find(".product__item__pic").attr("data-setbg");
-          const epText = $(el).find(".ep span").text().trim();
+      const p = await browser.newPage();
 
-          // --- [FIX] URL CLEANING LOGIC ---
-          // Ambil href asli: https://v10.../anime/4205/digimon.../episode/14
-          let rawLink = $(el).find("a").attr("href");
+      // Stealth and Identification
+      await p.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      );
 
-          // Kita ambil ID dan Slug-nya saja
-          // Hapus BaseURL dan '/anime/'
-          let endpoint = rawLink.replace(baseUrl, "").replace("/anime/", "");
+      // Navigate and wait for the DOM to be ready
+      await p.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+      });
 
-          // JIKA ada kata '/episode/', kita buang ekornya
-          if (endpoint.includes("/episode/")) {
-            endpoint = endpoint.split("/episode/")[0];
-          }
-          // Hasil: 4205/digimon-beatbreak (Bersih!)
-          // --------------------------------
+      // Extracting HTML content to parse with Cheerio (Faster than p.$$eval)
+      const content = await p.content();
+      const $ = cheerio.load(content);
+      const ongoing = [];
 
-          const total_episode = epText.replace("Ep", "").trim();
+      $(".product__item").each((index, el) => {
+        const $el = $(el);
+        const title = $el.find(".product__item__text h5 a").text().trim();
+        const thumb = $el.find(".product__item__pic").attr("data-setbg");
+        const epText = $el.find(".ep span").text().trim();
 
-          ongoing.push({
-            title,
-            thumb,
-            total_episode,
-            updated_on: "Hari ini",
-            updated_day: "Unknown",
-            endpoint,
-          });
+        // --- [FIX] URL CLEANING LOGIC ---
+        let rawLink = $el.find("a").attr("href") || "";
+        let endpoint = rawLink.replace(baseUrl, "").replace("/anime/", "");
+
+        if (endpoint.includes("/episode/")) {
+          endpoint = endpoint.split("/episode/")[0];
+        }
+        // --------------------------------
+
+        const total_episode = epText.replace("Ep", "").trim();
+
+        ongoing.push({
+          title,
+          thumb,
+          total_episode,
+          updated_on: "Hari ini",
+          updated_day: "Unknown",
+          endpoint,
         });
+      });
 
-        return res.status(200).json({
-          status: true,
-          message: "success",
-          ongoing,
-          currentPage: page,
-        });
-      }
-      return res.send({ message: response.status, ongoing: [] });
+      // Always close the browser to prevent memory leaks on your Ryzen 2500U
+      await browser.close();
+
+      return res.status(200).json({
+        status: true,
+        message: "success",
+        ongoing,
+        currentPage: page,
+      });
     } catch (error) {
-      console.log(error);
-      res.send({ status: false, message: error.message, ongoing: [] });
+      // Critical: Ensure browser is killed if an error occurs
+      if (browser) await browser.close();
+
+      console.error(`[Puppeteer Error]: ${error.message}`);
+      return res.status(500).json({
+        status: false,
+        message: error.message,
+        ongoing: [],
+      });
     }
   },
 
@@ -94,42 +119,49 @@ const Services = {
     const page = req.params.page;
     let url = `${baseUrl}/quick/finished?order_by=updated&page=${page}`;
 
+    let browser = null;
     try {
-      const response = await services.fetchService(url, res);
-      if (response.status === 200) {
-        const $ = cheerio.load(response.data);
-        let completed = [];
+      // Gunakan logika launch yang sama dengan getAnimeEpisode
+      browser = await puppeteer.launch({
+        headless: "new",
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      });
+      const p = await browser.newPage();
+      await p.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      );
 
-        $(".product__item").each((index, el) => {
-          const title = $(el).find(".product__item__text h5 a").text().trim();
-          const thumb = $(el).find(".product__item__pic").attr("data-setbg");
-          const score = $(el).find(".ep span").text().trim();
+      await p.goto(url, { waitUntil: "domcontentloaded" });
+      const content = await p.content();
+      const $ = cheerio.load(content);
 
-          let rawLink = $(el).find("a").attr("href");
-          // Completed biasanya sudah bersih linknya, tapi kita jaga-jaga
-          let endpoint = rawLink ? rawLink.split("/anime/")[1] : "";
+      let completed = [];
+      $(".product__item").each((index, el) => {
+        const title = $(el).find(".product__item__text h5 a").text().trim();
+        const thumb = $(el).find(".product__item__pic").attr("data-setbg");
+        const score = $(el).find(".ep span").text().trim();
+        let rawLink = $(el).find("a").attr("href");
+        let endpoint = rawLink ? rawLink.split("/anime/")[1] : "";
 
-          completed.push({
-            title,
-            thumb,
-            total_episode: "Tamat",
-            updated_on: "Full Batch",
-            score,
-            endpoint,
-          });
+        completed.push({
+          title,
+          thumb,
+          total_episode: "Tamat",
+          score,
+          endpoint,
         });
+      });
 
-        return res.status(200).json({
-          status: true,
-          message: "success",
-          completed,
-          currentPage: page,
-        });
-      }
-      return res.send({ status: response.status, completed: [] });
+      await browser.close();
+      return res.status(200).json({
+        status: true,
+        message: "success",
+        completed,
+        currentPage: page,
+      });
     } catch (error) {
-      console.log(error);
-      res.send({ status: false, message: error.message, completed: [] });
+      if (browser) await browser.close();
+      res.status(500).send({ status: false, message: error.message });
     }
   },
 
