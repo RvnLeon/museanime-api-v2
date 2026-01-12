@@ -2,7 +2,8 @@ const services = require("../helper/service");
 const cheerio = require("cheerio");
 const baseUrl = require("../constant/url");
 const episodeHelper = require("../helper/episodeHelper");
-const puppeteer = require("puppeteer");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+const puppeteer = require("puppeteer-extra");
 const fs = require("fs");
 
 const BLACKLIST_GENRES = [
@@ -31,6 +32,8 @@ const isSafeContent = (genres) => {
 
   return !hasForbidden;
 };
+
+puppeteer.use(StealthPlugin());
 
 const Services = {
   getOngoing: async (req, res) => {
@@ -118,8 +121,9 @@ const Services = {
 
   // 2. GET COMPLETED
   getCompleted: async (req, res) => {
-    const page = req.params.page;
-    let url = `${baseUrl}/quick/finished?order_by=updated&page=${page}`;
+    const { page } = req.params;
+    const url = `${baseUrl}/quick/ongoing?order_by=updated&page=${page}`;
+
     let browser = null;
 
     try {
@@ -128,75 +132,85 @@ const Services = {
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
-          "--disable-blink-features=AutomationControlled", // Hides Puppeteer footprint
+          "--disable-dev-shm-usage",
+          "--disable-blink-features=AutomationControlled", // Essential for stealth
         ],
       });
 
       const p = await browser.newPage();
 
-      // High-level evasion
-      await p.setExtraHTTPHeaders({
-        "Accept-Language": "en-US,en;q=0.9",
-      });
+      // High-level evasion: Emulate a high-resolution display
+      await p.setViewport({ width: 1366, height: 768 });
+
       await p.setUserAgent(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
       );
 
+      // We use 'networkidle2' to ensure scripts (like Turnstile) have space to execute
       await p.goto(url, {
-        waitUntil: "networkidle2", // Wait until no more than 2 network connections are active
+        waitUntil: "networkidle2",
         timeout: 60000,
       });
 
-      // CRITICAL: Wait for the specific element to exist before parsing
+      // --- BYPASS LOGIC ---
+      // We wait for the specific list container. If it's not found, it likely means
+      // we are stuck at the "Verify you are human" screen.
       try {
-        await p.waitForSelector(".product__item", { timeout: 15000 });
+        await p.waitForSelector(".product__item", { timeout: 20000 });
       } catch (e) {
-        console.error(
-          "Elements not found within timeout. Site might be blocking Koyeb IP."
-        );
-        // Optional: await p.screenshot({ path: 'debug.png' });
+        console.error("Cloudflare challenge screen detected or site timeout.");
+        // If the selector fails, we attempt to grab whatever content is there for debugging
       }
 
       const content = await p.content();
       const $ = cheerio.load(content);
-      let completed = [];
+      const ongoing = [];
 
-      $(".product__item").each((index, el) => {
-        const title = $(el).find(".product__item__text h5 a").text().trim();
-        const thumb = $(el).find(".product__item__pic").attr("data-setbg");
-        const score = $(el).find(".ep span").text().trim();
-        let rawLink = $(el).find("a").attr("href");
-        let endpoint = rawLink ? rawLink.split("/anime/")[1] : "";
+      $(".product__item").each((_, el) => {
+        const $el = $(el);
+        const title = $el.find(".product__item__text h5 a").text().trim();
+        const thumb = $el.find(".product__item__pic").attr("data-setbg");
+        const epText = $el.find(".ep span").text().trim();
+
+        let rawLink = $el.find("a").attr("href") || "";
+        let endpoint = rawLink.replace(baseUrl, "").replace("/anime/", "");
+
+        if (endpoint.includes("/episode/")) {
+          endpoint = endpoint.split("/episode/")[0];
+        }
+
+        const total_episode = epText.replace("Ep", "").trim();
 
         if (title) {
-          // Ensure we don't push empty objects
-          completed.push({
+          ongoing.push({
             title,
             thumb,
-            total_episode: "Tamat",
-            score,
+            total_episode,
+            updated_on: "Hari ini",
+            updated_day: "Unknown",
             endpoint,
           });
         }
       });
 
-      await browser.close();
       return res.status(200).json({
         status: true,
         message: "success",
-        completed,
+        ongoing,
         currentPage: page,
       });
     } catch (error) {
-      if (browser) await browser.close();
-      return res
-        .status(500)
-        .json({ status: false, message: error.message, completed: [] });
+      console.error(`[Scraper Error]: ${error.message}`);
+      return res.status(500).json({
+        status: false,
+        message: error.message,
+        ongoing: [],
+      });
     } finally {
+      // Critical: Ensure no zombie processes remain on your Ryzen 2500U
       if (browser) await browser.close();
     }
   },
-
   // 3. GET SEARCH
   getSearch: async (req, res) => {
     const query = req.params.q;
@@ -462,90 +476,61 @@ const Services = {
     const url = `${baseUrl}/anime/${endpoint}`;
 
     console.log(`\n========================================`);
-    console.log(`[START] Fetching via Puppeteer (Balanced Mode): ${url}`);
+    console.log(`[START] Fetching via Puppeteer Stealth: ${url}`);
 
     let browser = null;
 
     try {
-      // --- LOGIC 1: BROWSER PATH (STANDARD) ---
-      let executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || null;
-      if (!executablePath) {
-        const paths = [
-          "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-          "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-          "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-        ];
-        for (const path of paths) {
-          if (fs.existsSync(path)) {
-            executablePath = path;
-            break;
-          }
-        }
-      }
-      if (!executablePath) throw new Error("Browser tidak ditemukan!");
-
-      // --- LOGIC 2: LAUNCH ---
+      // --- LOGIC: DYNAMIC LAUNCH ---
       browser = await puppeteer.launch({
         headless: "new",
-        executablePath: executablePath,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
-          "--disable-accelerated-2d-canvas",
-          "--no-first-run",
-          "--no-zygote",
-          "--disable-gpu",
-          "--mute-audio", // Mute audio tetap oke buat performa
+          "--disable-blink-features=AutomationControlled", // Masking automated control
         ],
       });
 
       const page = await browser.newPage();
 
-      // User Agent tetap penting
+      // Emulating a high-resolution human session
+      await page.setViewport({ width: 1280, height: 720 });
       await page.setUserAgent(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
       );
 
-      // --- LOGIC 3: NAVIGASI & WAIT (THE FIX) ---
+      // --- NAVIGASI ---
+      console.log("[DEBUG] Navigating to Episode Page...");
+      await page.goto(url, {
+        waitUntil: "networkidle2", // Ensure scripts load fully for the player
+        timeout: 60000,
+      });
 
-      // 1. Masuk ke halaman, tapi jangan tunggu sampai 'networkidle' (kelamaan).
-      // Cukup tunggu sampai struktur HTML selesai dimuat ('domcontentloaded').
-      // Ini biasanya cuma butuh 1-2 detik.
-      console.log("[DEBUG] Navigating...");
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
-
-      // 2. TUNGGU SELECTOR (Pengganti Sleep)
-      // Kita tunggu sampai tag <video> ATAU <iframe> muncul.
-      // Begitu muncul, kode langsung lanjut (ga perlu nunggu timeout habis).
+      // --- BYPASS & WAIT LOGIC ---
+      // We look for the player specifically. If Cloudflare appears, this wait will fail.
       try {
-        console.log("[DEBUG] Waiting for player element...");
+        console.log("[DEBUG] Waiting for video player elements...");
         await page.waitForSelector(
-          'video#player, iframe[src*="stream"], iframe[src*="drive"]',
-          {
-            timeout: 15000, // Tunggu maksimal 15 detik
-            visible: true, // Pastikan elemennya terlihat (bukan hidden)
-          }
+          'video#player, iframe[src*="stream"], iframe[src*="drive"], iframe[src*="kurama"]',
+          { timeout: 25000, visible: true }
         );
-        console.log("[DEBUG] Element found! Proceeding immediately.");
+        console.log("[DEBUG] Player element detected.");
       } catch (e) {
-        console.log(
-          "[WARN] Element not detected via wait, trying to parse anyway..."
+        console.warn(
+          "[WARN] Selector timeout. Cloudflare might be active or player is slow."
         );
       }
 
-      // --- AMBIL DATA ---
       const content = await page.content();
       const $ = cheerio.load(content);
 
       let title = $("title").text().replace(" - Kuramanime", "").trim();
-      console.log(`[DEBUG] Title: ${title}`);
-
       let streamLink = "";
       let streamQuality = "Unknown";
       let qualityList = {};
 
-      // SCANNING (Video Tag)
+      // --- DATA EXTRACTION: VIDEO TAG ---
       const videoTag = $("video#player");
       if (videoTag.length > 0) {
         const mainSrc = videoTag.attr("src");
@@ -567,11 +552,10 @@ const Services = {
         });
       }
 
-      // SCANNING (Iframe Fallback)
+      // --- DATA EXTRACTION: IFRAME FALLBACK ---
       if (!streamLink) {
         $("iframe").each((i, el) => {
           const src = $(el).attr("src");
-          // Cek keyword umum streaming
           if (
             src &&
             (src.includes("komari") ||
@@ -586,16 +570,18 @@ const Services = {
         });
       }
 
-      console.log(`[RESULT] Final Link: ${streamLink || "ZONK"}`);
-
       const mirrorList = Object.keys(qualityList).map((key) => ({
         quality: key,
         link: qualityList[key],
       }));
 
+      console.log(
+        `[RESULT] Extraction complete: ${streamLink ? "SUCCESS" : "ZONK"}`
+      );
+
       return res.status(200).json({
         status: !!streamLink,
-        message: streamLink ? "success" : "failed to get video",
+        message: streamLink ? "success" : "failed to get video content",
         data: {
           title,
           baseUrl: url,
@@ -607,7 +593,9 @@ const Services = {
       });
     } catch (err) {
       console.error("[ERROR]", err.message);
-      res.status(500).send({ status: false, message: "Error: " + err.message });
+      return res
+        .status(500)
+        .json({ status: false, message: `Server Error: ${err.message}` });
     } finally {
       if (browser) await browser.close();
     }
