@@ -1,61 +1,61 @@
 /* * Filename: helper/service.js
- * Context: Browserless.io Integration ☁️
- * Description: Scraping via Remote Browser (Anti-Headache Edition).
+ * Context: ZenRows API Integration 🚀
+ * Description: Generic Scraping Service via ZenRows Proxy.
+ * Author: Leon (Refactored by Gemini)
  */
-const cheerio = require("cheerio");
-const puppeteer = require("puppeteer-core"); // Pakai core aja, gak usah download chromium
 
-// --- CONFIG ---
-// Masukkan Token Browserless kamu disini (atau lebih aman taruh di .env)
-const BROWSERLESS_TOKEN =
-  process.env.BROWSERLESS_TOKEN ||
-  "2TmGo2QXB9rcS8af87d07b507d53d94c143b9225dffe35753";
+const axios = require("axios");
+const cheerio = require("cheerio");
+
+// URL endpoint ZenRows (Ini JALAN/JEMBATAN-nya)
+const ZENROWS_BASE_URL = "https://api.zenrows.com/v1/";
+const ZENROWS_API_KEY = process.env.ZENROWS_API_KEY;
 
 const Service = {
-  fetchService: async (url, selector = "body") => {
-    let browser = null;
+  /**
+   * Mengambil data HTML via ZenRows.
+   * @param {string} fullUrl - URL lengkap target (misal: https://v10.kuramanime.tel/anime/...)
+   * @param {string} selector - (Opsional) Wait for selector
+   */
+  fetchService: async (fullUrl, selector = "body") => {
     try {
-      console.log(`[HELPER] ☁️ Connecting to Browserless.io: ${url}`);
+      if (!ZENROWS_API_KEY) {
+        throw new Error("ZENROWS_API_KEY belum disetting di .env!");
+      }
 
-      // Connect ke Browser Remote
-      browser = await puppeteer.connect({
-        browserWSEndpoint: `wss://production-sfo.browserless.io/stealth?token=2TmGo2QXB9rcS8af87d07b507d53d94c143b9225dffe35753`,
+      // console.log(`[HELPER] 🚀 Fetching: ${fullUrl}`);
+
+      const params = {
+        url: fullUrl,
+        apikey: ZENROWS_API_KEY,
+        js_render: "true",
+        antibot: "true",
+        wait_for: selector,
+      };
+
+      // Kita nembak ke ZenRows, bukan ke url target langsung
+      const response = await axios({
+        method: "GET",
+        url: ZENROWS_BASE_URL,
+        params: params,
+        timeout: 60000,
       });
 
-      const page = await browser.newPage();
+      // console.log(`[HELPER] 🎉 Status: ${response.status}`);
 
-      // Setting Viewport Standard
-      await page.setViewport({ width: 1920, height: 1080 });
-
-      // Navigasi
-      console.log("[HELPER] Navigating...");
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
-
-      // Cek Cloudflare (Browserless biasanya otomatis lolos, tapi jaga-jaga)
-      const title = await page.title();
-      if (title.includes("Just a moment")) {
-        console.log("[HELPER] ⚠️ Cloudflare found, waiting for auto-bypass...");
-        await new Promise((r) => setTimeout(r, 5000)); // Browserless stealth usually handles this
-      }
-
-      // Tunggu Konten
-      try {
-        console.log(`[HELPER] Waiting for content: ${selector}`);
-        await page.waitForSelector(selector, { timeout: 30000 });
-        console.log("[HELPER] 🎉 Success!");
-      } catch (e) {
-        throw new Error("Timeout waiting for content on Browserless.");
-      }
-
-      const content = await page.content();
-      const $ = cheerio.load(content);
-
-      return { status: 200, data: $ };
+      // Return Cheerio Object ($)
+      return { status: 200, data: cheerio.load(response.data) };
     } catch (error) {
-      console.error(`[HELPER ERROR] ${error.message}`);
+      if (error.response) {
+        console.error(
+          `[HELPER ERROR] ${error.response.status} - ${JSON.stringify(
+            error.response.data
+          )}`
+        );
+      } else {
+        console.error(`[HELPER ERROR] ${error.message}`);
+      }
       throw error;
-    } finally {
-      if (browser) await browser.close();
     }
   },
 };
